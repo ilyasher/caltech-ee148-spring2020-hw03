@@ -83,9 +83,61 @@ class Net(nn.Module):
     '''
     def __init__(self):
         super(Net, self).__init__()
+        self.conv1 = nn.Conv2d(in_channels=1, out_channels=8, kernel_size=(3,3), stride=1)
+        self.conv2 = nn.Conv2d(8, 16, 3, 1)
+        self.conv3 = nn.Conv2d(16, 32, 3, 1)
+        self.conv4 = nn.Conv2d(32, 64, 3, 1)
+
+        self.dropout1 = nn.Dropout2d(0.5)
+        self.dropout2 = nn.Dropout2d(0.5)
+        self.dropout3 = nn.Dropout2d(0.5)
+        self.dropout4 = nn.Dropout2d(0.5)
+
+        self.bn1 = nn.BatchNorm2d(8)
+        self.bn2 = nn.BatchNorm2d(16)
+        self.bn3 = nn.BatchNorm2d(32)
+        self.bn4 = nn.BatchNorm2d(64)
+
+        self.fc1 = nn.Linear(576, 64)
+        self.fc2 = nn.Linear(64, 10)
 
     def forward(self, x):
-        return x
+        # shape is [1, 28, 28]
+        x = self.conv1(x) # [B, 8, 26, 26]
+        x = F.relu(x)
+        x = self.dropout1(x)
+        x = self.bn1(x)
+
+        x = self.conv2(x) # [B, 16, 24, 24]
+        x = F.relu(x)
+        x = F.max_pool2d(x, 2) # [B, 16, 12, 12]
+        x = self.dropout2(x)
+        x = self.bn2(x)
+
+        x = self.conv3(x) # [B, 32, 10, 10]
+        x = F.relu(x)
+        x = F.max_pool2d(x, 2) # [B, 32, 5, 5]
+        x = self.dropout3(x)
+        x = self.bn3(x)
+        # print(x.shape)
+
+        x = self.conv4(x) # [B, 64, 3, 3]
+        x = F.relu(x)
+        # print(x.shape)
+        # x = F.avg_pool2d(x, 2) # [B, 64, 1, 1]
+        # print(x.shape)
+        x = self.dropout4(x)
+        x = self.bn4(x)
+        # print(x.shape)
+
+        x = torch.flatten(x, 1) # [B, 256]
+        x = self.fc1(x)
+        x = F.relu(x)
+        x = self.fc2(x)
+        # print(x.shape)
+
+        output = F.log_softmax(x, dim=1)
+        return output
 
 
 def train(args, model, device, train_loader, optimizer, epoch):
@@ -172,7 +224,7 @@ def main():
         assert os.path.exists(args.load_model)
 
         # Set the test model
-        model = fcNet().to(device)
+        model = Net().to(device)
         model.load_state_dict(torch.load(args.load_model))
 
         test_dataset = datasets.MNIST('../data', train=False,
@@ -192,6 +244,15 @@ def main():
     train_dataset = datasets.MNIST('../data', train=True, download=True,
                 transform=transforms.Compose([       # Data preprocessing
                     transforms.ToTensor(),           # Add data augmentation here
+                    # transforms.RandomAffine(10, translate=(0.05, 0.05),
+                    #     scale=(0.9, 1.1), shear=10,
+                    #     interpolation=transforms.functional.InterpolationMode.BILINEAR),
+                    # transforms.RandomRotation(5, resample=2),
+
+                    # transforms.RandomAffine(2, shear=0.02),
+                    # transforms.GaussianBlur(3, sigma=(0.1, 1.0)),
+                    # transforms.RandomResizedCrop(28, scale=(0.95, 1.0), ratio=(0.9, 1.1)),
+
                     transforms.Normalize((0.1307,), (0.3081,))
                 ]))
 
@@ -199,8 +260,25 @@ def main():
     # training by using SubsetRandomSampler. Right now the train and validation
     # sets are built from the same indices - this is bad! Change it so that
     # the training and validation sets are disjoint and have the correct relative sizes.
-    subset_indices_train = range(len(train_dataset))
-    subset_indices_valid = range(len(train_dataset))
+    import random
+    random.seed(args.seed)
+
+    print(train_dataset[0][0].shape)
+
+    i_by_label = dict()
+    for i, (_, label) in enumerate(train_dataset):
+        if label not in i_by_label:
+            i_by_label[label] = list()
+        i_by_label[label].append(i)
+
+    subset_indices_train = list()
+    subset_indices_valid = list()
+    for label, indexes in i_by_label.items():
+        random.shuffle(indexes)
+        split_idx = int(len(indexes) * 0.15)
+        subset_indices_train.extend(indexes[split_idx:])
+        subset_indices_valid.extend(indexes[:split_idx])
+
 
     train_loader = torch.utils.data.DataLoader(
         train_dataset, batch_size=args.batch_size,
@@ -212,7 +290,7 @@ def main():
     )
 
     # Load your model [fcNet, ConvNet, Net]
-    model = ConvNet().to(device)
+    model = Net().to(device)
 
     # Try different optimzers here [Adam, SGD, RMSprop]
     optimizer = optim.Adadelta(model.parameters(), lr=args.lr)
